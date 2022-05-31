@@ -38,13 +38,30 @@
 #define STATUS_ACTION_ENABLE		2 //强制开
 #define STATUS_ACTION_DISABLE		4 //强制关
 
+#define TIMEOUT_WATCHDOG 60
+#define STATUS_WD_INIT 1
+#define STATUS_WD_CLOSE 2
+
+#define INVALID_FD -1
+#define TIME_S_FD_NOT_AVAILABLE 0	 /*s*/
+#define TIME_FD_NOT_AVAILABLE 500000 /*us*/
+
+#define ONCE 5
+#define REAL 4
+#define DAY 3
+#define HOUR 2
+#define MINUTE 1
+
+#define GPIO1 1
+#define GPIO2 2
+#define GPIO3 3
+#define GPIO4 4
+
 typedef struct
 {
 	uint16_t auth;				//授权信息
 	uint16_t upTime;			//上传时间
 	uint8_t heartbeatTime;		//心跳包
-	uint8_t pageTime;			//换页时长
-	uint16_t ledTime;			//屏幕更新时间
 	uint8_t testT;				//读取模式 
 	uint8_t actionType;			//单双联动状态
 	uint16_t enable;			//功能位 -
@@ -54,18 +71,7 @@ typedef struct
 	uint8_t	nTotal;				//设备总数
 	uint8_t	n;					//同步设备编号
 	uint8_t	version;			//版本号
-	uint8_t	lenValueLed;		// first bit(led align)+ led font size +  for led space for senser's value
-	uint16_t timeWeather;
-	uint16_t ledBlankConfig;	// row space; first blank; second blank; third black;
-	uint32_t weatherConf;		// led weather size and color, effect, speed;
-	uint32_t timeZero;			// time zero 
-	uint8_t backValue;			// time zero 
-	uint8_t growth;				// 扬尘bound限制 
-	uint16_t n2;				// nothing 
-//	uint32_t enable2;			// enable2
-	uint16_t enable2;			// enable2
 }System_T;
-
 
 typedef struct 
 {
@@ -87,11 +93,22 @@ typedef struct ControlStruct
 	int endValue;
 }Control_T;
 
-
-
 void initGPIO( );
 int commandExecute(char *cmd, char *isRead);
+int checkFdStatus(int *fdArray, int n, unsigned char isRead, int nt);
+void openGPIO(unsigned char sel);
+void initActionStatus();
+uint16_t getPeriod(int n);
+int ipToString(char *p, uint8_t n);
+uint16_t getDestPort(uint8_t n);
 
-extern unsigned char buffer_result[ 256 ];
-extern Control_T ctrolArray[ 16 ];
+extern unsigned char buffer_result[256];
+extern Control_T ctrolArray[16];
+extern time_t time_real_Ago; //实时数据上传时间查看
+extern time_t time_real_Now;
+extern unsigned char ID[50];
+extern System_T systemParam;
+extern int period;
+extern int count_for_danger_action;
+extern unsigned char danger_channel;
 #endif

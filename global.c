@@ -8,6 +8,15 @@ const unsigned char *directionZH[ ] = { "东北偏北", "东北", "东北偏东"
 int count_for_danger_action;          //持续/等待时长
 int action_status;                     //暂知0-2位为联动状态,
 unsigned char buffer_result[ 256 ];
+int fd_watchdog;
+int system_status;
+unsigned char ID[50] = {0};
+time_t time_real_Ago = 0; //实时数据上传时间查看
+time_t time_real_Now = 0;
+int period;
+int count_for_danger_action; //持续/等待时长
+unsigned char danger_channel;
+IP_T destIpArray[9];
 
 //命令封装
 int commandExecute(char *cmd, char *isRead) 
@@ -28,6 +37,30 @@ int commandExecute(char *cmd, char *isRead)
 	return result;
 }
 
+void manageGPIO(unsigned char sel, unsigned char option)
+{
+	char cmdStr[] = "echo 1 > /sys/class/gpio/gpio134/value";
+	if (sel == GPIO1)// 1th relay
+		sel = 134;
+
+	else if (sel == GPIO2) // 2th relay
+		sel = 133;
+	else if (sel == GPIO3)// 3th relay
+		sel = 137;
+	else if (sel == GPIO4)// 4th relay
+		sel = 120;
+	else{
+		return;
+	}
+	cmdStr[5] = 0x30 + option; // 0x03+ 将数字转为ASCII值
+	cmdStr[29] = 0x30 + (sel / 100);
+	cmdStr[30] = 0x30 + (sel % 100 / 10);
+	cmdStr[31] = 0x30 + (sel % 10);
+	commandExecute(cmdStr, "w");
+}
+
+void openGPIO(unsigned char sel){manageGPIO(sel, 1);}
+
 void initGPIO( )
 {
 	commandExecute("echo 134 > /sys/class/gpio/export", "w"); //GPIO0  (5_6) 导出引脚编号为134的GPIO
@@ -46,6 +79,7 @@ void initGPIO( )
 	commandExecute("echo 0 > /sys/class/gpio/gpio120/value", "w");
 }
 
+
 uint8_t* getDestIp(uint8_t n) {return destIpArray[n].destIp;}
 uint8_t* getSystemIP() {return systemParam.ip;}
 uint16_t getDestPort(uint8_t n) {return destIpArray[n].destPort;}
@@ -55,8 +89,8 @@ void setDestPort(uint8_t i, uint16_t n) {destIpArray[i].destPort = n;}
 void rebootSystem() { commandExecute("reboot -f", "r"); } //重启系统
 void openConfigFile() {file = fopen("/home/app/config.txt", "rt+");}
 void closeConfigFile() {fflush(file);fclose(file);}
-
-
+void initActionStatus(){action_status = STATUS_ACTION_INIT;}
+uint16_t getPeriod(int n) {n = n - 1;return ctrolArray[n].period;}
 
 unsigned char char2hex(unsigned char c)
 {
@@ -160,6 +194,15 @@ int getN_InFile(unsigned char *des, int n)
 	return len;
 }
 
+uint16_t getDestPort(uint8_t n){return destIpArray[n].destPort;}
+
+int ipToString(char *p, uint8_t n)
+{
+	int len;
+	len = sprintf(p, "%d.%d.%d.%d", destIpArray[n].destIp[0], destIpArray[n].destIp[1],
+				  destIpArray[n].destIp[2], destIpArray[n].destIp[3]);
+	return len;
+}
 
 void getControl( )
 {
@@ -186,4 +229,146 @@ void initSystem( )
 void initActionStatus()
 {
 	action_status = STATUS_ACTION_INIT;
+}
+
+void openWatchDog()
+{
+	int timeout;
+	timeout = TIMEOUT_WATCHDOG; //看门狗时长
+	printf("System start!\n");
+	fd_watchdog = open("/dev/watchdog", O_RDWR);
+	if (fd_watchdog < 0)
+		printf("watchdog open error");
+	else{
+		ioctl(fd_watchdog, WDIOC_SETTIMEOUT, &timeout); //看门狗倒计时
+		system_status = STATUS_WD_INIT;
+	}
+}
+void closeWatchDog()
+{
+	printf("close watchdog!\n");
+	if (system_status != STATUS_WD_CLOSE){
+		system_status = STATUS_WD_CLOSE;
+		write(fd_watchdog, "V", 1);
+		close(fd_watchdog);
+	}
+}
+void feedWatchDog()
+{
+	printf("\nfeed dog");
+	if (system_status != STATUS_WD_CLOSE)
+		ioctl(fd_watchdog, WDIOC_KEEPALIVE, 0);
+}
+
+int getID(void)
+{
+	int i;
+	int len = 0;
+	int num = 1; //循环次数
+	int len_bef; //保存上次获取的ID长度
+	extern unsigned char ID[];
+	unsigned char *dest;
+	unsigned char id[50];
+	unsigned char *choice_id[5] = {NULL};
+	unsigned char *path[5] = {"/home/osen/app/ID.txt", "/home/osen/app/ID1.txt", "/home/osen/app/ID2.txt", "/home/osen/app/ID3.txt", "/home/osen/app/ID4.txt"};
+	memset(id, '\0', sizeof(id));
+	choice_id[0] = ID;
+	for(i = 0; i < num; i++){
+		dest = choice_id[i]; //选择存放位置
+		file = fopen(path[i], "r");
+		if (file != NULL){
+			fseek(file, 0L, SEEK_SET);
+			fgets(id, 50, file);
+			id[49] = '\0';
+			len = getIDLen(id);
+			if(len == 32 && id[0] == '3' && id[2] == '3'){
+				fseek(file, 0L, SEEK_SET);
+				len = getN_InFile(id, 0);
+			}
+			else{
+				if (len > 1){}
+				else
+					len = 16;
+			}
+			id[len] = '\0';
+			memcpy(dest, id, len + 1);
+			len_bef = len + 1;
+			fclose(file);
+		}
+		else{
+			if(i != 0)
+				memcpy(dest, choice_id[0], strlen(choice_id[0]));
+			continue;
+		}
+	}
+	return len;
+}
+
+void getFristLineParam(void)
+{
+	unsigned char *p;
+	openConfigFile();
+	p = (unsigned char *)(&systemParam);
+	getN_InFile(p, LINE_AUTH_CONFIG);
+	closeConfigFile();
+}
+
+int checkFdStatus(int *fdArray, int n, unsigned char isRead, int nt)
+{
+	int retv = FALSE;
+	int fd;
+	int i;
+	int j = 0;
+	uint8_t k = 0;
+	fd_set fdSet;
+	struct timeval ts;
+	ts.tv_sec = TIME_S_FD_NOT_AVAILABLE;	 // TIME_S_FD_NOT_AVAILABLE=0
+	ts.tv_usec = TIME_FD_NOT_AVAILABLE * nt; // TIME_FD_NOT_AVAILABLE=500000( 0.5*n S)
+	j = fdArray[0];
+	if (n == 1 && fdArray[0] == INVALID_FD){
+		return FALSE;
+	}
+	FD_ZERO(&fdSet); //清空文件描述符集，初始化
+	for (i = 0; i < n; i++){
+		fd = fdArray[i];
+		if (fd > j)
+			j = fd;
+		if (fd != INVALID_FD){
+			printf("fd:%d ", fd);
+			FD_SET(fd, &fdSet); //增加新的描述符fd到集合fdSet里
+		}
+	}
+	n = i + 1;
+	fd = j;
+REDO_SELECT:
+	if (TRUE == isRead)
+		retv = select(fd + 1, &fdSet, NULL, NULL, &ts); //监视读
+	else
+		retv = select(fd + 1, NULL, &fdSet, NULL, &ts); //监视写
+	printf("retv = %d\n", retv);
+	if (retv <= 0){
+		// if(errno == EINTR && j < fd+5) //中断信号很频繁,j<fd+5限制了超时时间,使其失效,故舍弃
+		if (errno == EINTR){ //达到超时时间等就不会出现中断信号了
+			printStyle("!%d ", j++);
+			errno = 0;
+			goto REDO_SELECT;
+		}
+		else if (retv == -1)
+			printStyle("errno:%d\n", errno);
+		retv = FALSE;
+	}
+	else{
+		for (i = 0; i < n; i++){
+			retv = FD_ISSET(fdArray[i], &fdSet); //用于测试指定文件描述符是否在该集合中
+			if (retv != 0){
+				break;
+			}
+		}
+		if(i == n){
+			retv = FALSE;
+		}
+		else
+			retv = i;
+	}
+	return retv;
 }

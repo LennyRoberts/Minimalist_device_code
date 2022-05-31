@@ -1,5 +1,11 @@
 #include "global.h"
 #include "data.h"
+#include "network.h"
+#include "ctr.h"
+
+extern time_t time_real_Ago; //实时数据上传时间查看
+extern time_t time_real_Now;
+time_t tm_gz;
 
 int main(void)
 {
@@ -23,7 +29,8 @@ int main(void)
 	commandExecute("wr sh -c \"echo hosts:files dns>/etc/nsswitch.conf\"", "w");  //写入DNS
 	setenv("TZ", "GMT-8", 1);
 	commandExecute("hwclock -s ", "w");                                           //同步硬件时间到系统时间
-	
+	period = getPeriod(danger_channel);											  //报警时间（检测周期）
+
 	initGPIO();                       //初始化gpio口
 	initVariable();                   //初始化变量
     initSystem();                     //传感器参数
@@ -31,64 +38,40 @@ int main(void)
 	initResult();                     //写入参数默认值
 	getID();                          //获取3个中心的id号
 
-	serial_open_status = openAllSensers();                                       //串口+设备波特率
-	if(serial_open_status){                                                      //串口无法正常打开
+	serial_open_status = openAllSensers(); //串口+设备波特率
+	if(serial_open_status){           //串口无法正常打开
 		commandExecute("wr sh -c \"echo 'open serial port errno!!!' >> osen_run.log\"", "w");
 		exit(1);
 	}
-
-
-	print_config();
-
-
 	srand(time(0)); 
-
-	#if(!NOBEEP)
-	startUpBeep();                                                             //蜂鸣器
-	#endif
-	printStyle("before send version uptime= %04X\n", getUpTime());
-	ledSendVersion();                                                          //发送版本号
-	// commandExecute("rdate -s 132.163.96.4 && hwclock -w", "w");                //同步时间
-	commandExecute("rdate -s time.nist.gov && hwclock -w", "w");               //同步时间
-
-	openWatchDog();                                                            //打开看门狗
-	getAllSenserValue();                                                    //采集传感器数据入口函数
-
-	timeinfo = localtime (&timeVar); 
-	systime_min = timeinfo->tm_min;
-	systime_sec = timeinfo->tm_sec;
-	sendService(RECORD_SERVICE,2011);                                       //上传实时数据
-	time_before1=time(NULL);
-
+	commandExecute("rdate -s time.nist.gov && hwclock -w", "w"); //同步时间
+	openWatchDog();                                              //打开看门狗
+	getAllSenserValue();                                         //采集传感器数据入口函数
 
 	printStr("\n\n-------------------------------------------------------\n");
 	printStr("--------Init Finish and welcome use the device---------\n");
 	printStr("-------------------------------------------------------\n\n");
-	
+	int count = 0;
+	int count_back = count + 1;
 	while(1){ 
-		if(count_back != count){                                                         //减少CPU占用
+		if(count_back != count){                         //减少CPU占用
 			time(&time_real_Now);
 			printf("\n----------------[upTimeDiff:%ld]--------------------\n", 
-			       time_real_Now - time_real_Ago);                                       //距离上一次实时数据上传时间间隔
+			       time_real_Now - time_real_Ago);      //距离上一次实时数据上传时间间隔
 
 			count_back = count;
 			tm_gz = time(NULL);
-			timeinfo = localtime(&tm_gz);                                                //用于数据上传时机的控制
-
-			getFristLineParam();                                                       //config第一行实时读取
-	
-
-			uploadServer(timeinfo);                                                   //上传到服务器
-			temp = manageDangerAction( );                                            //联动管理
-
-			num = getResult(num);                                                   //读传感器
+			timeinfo = localtime(&tm_gz);               //用于数据上传时机的控制
+			getFristLineParam();                        //config第一行实时读取
+			num = getResult(num);                       //读传感器
+			uploadServer(timeinfo);                     //上传到服务器
+			temp = manageDangerAction(num);             //联动管理
 			if(count >= getUpTime())
 				count = count % getUpTime();
-
-			feedWatchDog();                                                         //喂狗
-			checkCommandNew();                                                      //上位机
-		}else                                                                      //if count_back != count
-			checkSockFdArray();                                                    //链路断开重连
+			feedWatchDog();                             //喂狗
+			checkCommandNew();                          //上位机
+		}else                                           //if count_back != count
+			checkSockFdArray();                         //链路断开重连
 		if(count_back == count)
 			usleep(20);
 	}
